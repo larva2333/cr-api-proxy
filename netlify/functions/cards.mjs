@@ -77,6 +77,10 @@ exports.handler = async (event) => {
     }
     const json = JSON.parse(raw);
     const rawItems = Array.isArray(json) ? json : (json.items || []);
+    // 调试用：?raw=1 原样返回官方上游数据（未经精简/合入），方便核对官方到底有哪些字段
+    if (event.queryStringParameters && event.queryStringParameters.raw === '1') {
+      return { statusCode: 200, headers: { ...CORS, 'Content-Type': 'application/json' }, body: JSON.stringify(rawItems) };
+    }
     const items = rawItems.map((c) => simplify(c, metaMap));
     const id = event.queryStringParameters && event.queryStringParameters.id;
     if (id) {
