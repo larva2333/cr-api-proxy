@@ -8,7 +8,7 @@
 //   - evolution / hero            : 官方 API 的 iconUrls 字段——有 evolutionMedium 即「可进化」，有 heroMedium 即「英雄卡」
 //   - icon / icon_evo / icon_hero : 官方图床 URL（medium / evolutionMedium / heroMedium），App 直接用官方图
 //   - is_tower                    : 官方 /v1/cards 不含塔兵（Tower Princess 等仅出现在本地库），故恒为 false
-//   - type (troop/building/spell) : 官方 API 不返回；App 侧新增卡默认填 "troop"，由用户手动维护，本函数不再提供
+//   - type (troop/building/spell) : 官方 API 不返回；按 Supercell 官方 id 编码规则推断（26xxxxxx=军队/27xxxxxx=建筑/28xxxxxx=法术），本函数直接算好返回，App 无需再推断
 //
 // 接口：GET /.netlify/functions/cards        -> 全量卡牌（数组）
 //       GET /.netlify/functions/cards?id=26000000 -> 单卡
@@ -22,13 +22,24 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS'
 };
 
+// 由 Supercell 官方 id 编码规则推断 type（官方 /v1/cards 不返回 type）：
+//   26xxxxxx = troop(军队)，27xxxxxx = building(建筑)，28xxxxxx = spell(法术)，其余默认 troop。
+function inferType(id) {
+  const p = Math.floor(id / 1000000);
+  if (p === 26) return 'troop';
+  if (p === 27) return 'building';
+  if (p === 28) return 'spell';
+  return 'troop';
+}
+
 // 把官方卡牌对象精简成 App 需要的字段。
 // 注意：evolution/hero 直接由官方 iconUrls 推断（evolutionMedium/heroMedium 字段存在与否）。
-// type 不返回（官方无此字段），App 新增卡默认 troop、用户手动维护。
+// type 由官方 id 前缀规则推断后一并返回（26军队/27建筑/28法术）。
 function simplify(c) {
   const iu = c.iconUrls || {};
+  const id = c.id;
   return {
-    id: c.id,
+    id: id,
     name: c.name || null,
     elixir: (c.elixirCost != null ? c.elixirCost : null),
     rarity: c.rarity || null,
@@ -37,7 +48,8 @@ function simplify(c) {
     is_tower: false,
     icon: iu.medium || null,
     icon_evo: iu.evolutionMedium || null,
-    icon_hero: iu.heroMedium || null
+    icon_hero: iu.heroMedium || null,
+    type: inferType(id)
   };
 }
 
