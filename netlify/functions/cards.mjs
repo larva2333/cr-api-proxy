@@ -41,7 +41,13 @@ exports.handler = async (event) => {
       return { statusCode: res.status, headers: { ...CORS, 'Content-Type': 'application/json' }, body: raw };
     }
     const json = JSON.parse(raw);
-    const items = (Array.isArray(json) ? json : (json.items || [])).map(simplify);
+    const rawItems = Array.isArray(json) ? json : (json.items || []);
+    const dbg = event.queryStringParameters && event.queryStringParameters.debug;
+    if (dbg) {
+      const sample = rawItems[0] || {};
+      return { statusCode: 200, headers: { ...CORS, 'Content-Type': 'application/json' }, body: JSON.stringify({ count: rawItems.length, keys: Object.keys(sample), sample }) };
+    }
+    const items = rawItems.map(simplify);
     const id = event.queryStringParameters && event.queryStringParameters.id;
     if (id) {
       const num = parseInt(id, 10);
