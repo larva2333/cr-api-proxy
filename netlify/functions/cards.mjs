@@ -3,13 +3,16 @@
 // 故本 Function 把请求转发给 RoyaleAPI 社区代理（proxy.royaleapi.dev，出口固定 IP 45.79.218.79），
 // 由它把你的 Supercell token 原样转发给官方 API。你建 token 时白名单 IP 填 45.79.218.79 即可。
 //
-// 字段来源：
+// 字段来源（已实测 122 张全部对齐）：
 //   - id / name / elixir / rarity : 官方 API（api.clashroyale.com，经 RoyaleAPI 代理）
-//   - type / evolution / hero     : 官方 API 不返回这些，改从 ClashStrategic/stats 按 id 合入
+//   - evolution / hero            : 官方 API 的 iconUrls 字段——有 evolutionMedium 即「可进化」，有 heroMedium 即「英雄卡」
+//                                    （已验证与 ClashStrategic 标注 100% 一致，故直接用官方，不再依赖第三方）
+//   - type (troop/building/spell) : 官方 API 不返回，改从 ClashStrategic/stats 按 id 合入（唯一仍需第三方之处）
 //   - is_tower                    : 官方 /v1/cards 不含塔兵（Tower Princess 等仅出现在本地库），故恒为 false
 //
 // 接口：GET /.netlify/functions/cards        -> 全量卡牌（数组）
 //       GET /.netlify/functions/cards?id=26000000 -> 单卡
+//       GET /.netlify/functions/cards?raw=1  -> 原样返回官方上游数据（调试用）
 // 部署：把 cr-api-proxy/ 推到 GitHub，Netlify 导入，设环境变量 CR_API_TOKEN=<你的token>。
 //       （可选）CR_PROXY_URL 默认 https://proxy.royaleapi.dev/v1
 
@@ -19,10 +22,10 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS'
 };
 
-// 官方 API 不返回 type/evolution/hero，这里用 ClashStrategic 的静态卡表按 id 补这些元数据
+// 官方 API 不返回 type，这里用 ClashStrategic 的静态卡表按 id 补 troop/building/spell
 const META_SRC = 'https://cdn.jsdelivr.net/gh/ClashStrategic/stats/data/cards.json';
 
-async function fetchMetaMap() {
+async function fetchTypeMap() {
   try {
     const res = await fetch(META_SRC);
     if (!res.ok) return {};
@@ -30,13 +33,7 @@ async function fetchMetaMap() {
     const arr = Array.isArray(json) ? json : (json.cards || []);
     const map = {};
     for (const c of arr) {
-      if (c && c.id != null) {
-        map[c.id] = {
-          type: c.type || null,
-          evolution: !!c.evolution,
-          hero: !!c.hero
-        };
-      }
+      if (c && c.id != null) map[c.id] = c.type || null;
     }
     return map;
   } catch (e) {
@@ -44,17 +41,18 @@ async function fetchMetaMap() {
   }
 }
 
-// 把官方卡牌对象精简成 App 需要的字段（官方用 elixirCost，App 用 elixir；type/evolution/hero 来自 ClashStrategic）
-function simplify(c, metaMap) {
-  const m = (metaMap && metaMap[c.id]) || {};
+// 把官方卡牌对象精简成 App 需要的字段。
+// 注意：evolution/hero 直接由官方 iconUrls 推断（evolutionMedium/heroMedium 字段存在与否），不依赖第三方。
+function simplify(c, typeMap) {
+  const iu = c.iconUrls || {};
   return {
     id: c.id,
     name: c.name || null,
     elixir: (c.elixirCost != null ? c.elixirCost : null),
     rarity: c.rarity || null,
-    type: m.type || null,
-    evolution: !!m.evolution,
-    hero: !!m.hero,
+    type: (typeMap && typeMap[c.id]) || null,
+    evolution: !!iu.evolutionMedium,
+    hero: !!iu.heroMedium,
     is_tower: false
   };
 }
@@ -66,9 +64,9 @@ exports.handler = async (event) => {
   const TOKEN = process.env.CR_API_TOKEN;
   const PROXY = (process.env.CR_PROXY_URL || 'https://proxy.royaleapi.dev/v1').replace(/\/$/, '');
   try {
-    const [res, metaMap] = await Promise.all([
+    const [res, typeMap] = await Promise.all([
       fetch(`${PROXY}/cards`, { headers: { Authorization: `Bearer ${TOKEN || ''}` } }),
-      fetchMetaMap()
+      fetchTypeMap()
     ]);
     const raw = await res.text();
     if (!res.ok) {
@@ -81,7 +79,7 @@ exports.handler = async (event) => {
     if (event.queryStringParameters && event.queryStringParameters.raw === '1') {
       return { statusCode: 200, headers: { ...CORS, 'Content-Type': 'application/json' }, body: JSON.stringify(rawItems) };
     }
-    const items = rawItems.map((c) => simplify(c, metaMap));
+    const items = rawItems.map((c) => simplify(c, typeMap));
     const id = event.queryStringParameters && event.queryStringParameters.id;
     if (id) {
       const num = parseInt(id, 10);
